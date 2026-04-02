@@ -1,20 +1,19 @@
+import dotenv from 'dotenv'
+dotenv.config()
 import express from 'express'
-const app = express()
 import helmet from 'helmet'
 import multer from 'multer'
 import fs from 'fs'
-import dotenv from 'dotenv'
 import path from 'path'
 import csvToJson from 'csvtojson'
 import { json2csv } from 'csv42'
 import { fileURLToPath } from 'url'
+const app = express()
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-dotenv.config()
 app.use(helmet())
-
 app.use(express.json())
 app.use(express.urlencoded({ extended: true, limit: '3mb' }))
 app.use(express.static('dist'))
@@ -53,39 +52,71 @@ const target = multer({
 })
 
 app.post('/api/convert/csv-json/:imagepath', target.array('files'), async (req, res) => {
-  await fs.promises.mkdir(path.resolve('./dist/uploads/', req.params.imagepath), {
-    recursive: true
-  })
-const targetName = path.parse(req.files[0].filename).name
   try {
-    const result = await csvToJson().fromFile(`./dist/${req.files[0].filename}`)
-    await fs.promises.writeFile(`./dist/uploads/${req.params.imagepath}/${targetName}.json`,JSON.stringify(result),'utf-8')
-    res.json({ code: 200, filename: `${targetName}.json` })
-  } catch (error) {
-    console.log(error)
-    res.status(500).json({ error: 'Conversion failed' })
-  }
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No file uploaded' })
+    }
 
+    const uploadDir = path.resolve('./dist/uploads/', req.params.imagepath)
+    await fs.promises.mkdir(uploadDir, { recursive: true })
+
+    const file = req.files[0]
+    const targetName = path.parse(file.filename).name
+
+    const result = await csvToJson().fromFile(file.path)
+
+    const outputPath = `${uploadDir}/${targetName}.json`
+
+    await fs.promises.writeFile(
+      outputPath,
+      JSON.stringify(result, null, 2),
+      'utf-8'
+    )
+
+    res.json({ code: 200, filename: `${targetName}.json` })
+
+  } catch (error) {
+    console.error("REAL ERROR:", error)
+    res.status(500).json({ error: error.message })
+  }
 })
 
-app.post('/api/convert/json-csv/:imagepath', target.array('files'), async (req, res) => {
-  await fs.promises.mkdir(path.resolve('./dist/uploads/', req.params.imagepath), {
-    recursive: true
-  })
+app.post('/api/convert/:type/:imagepath', target.array('files'), async (req, res) => {
   try {
-    const targetName = req.files[0].filename.split('.')[0]
-    const data = JSON.parse(await fs.promises.readFile(`./dist/${req.files[0].filename}`, 'utf-8'))
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No file uploaded' })
+    }
+
+    const uploadDir = path.resolve('./dist/uploads/', req.params.imagepath)
+    await fs.promises.mkdir(uploadDir, { recursive: true })
+
+    const file = req.files[0]
+    const targetName = file.filename.split('.')[0]
+
+    const raw = await fs.promises.readFile(file.path, 'utf-8')
+
+    let data
+    try {
+      data = JSON.parse(raw)
+    } catch (e) {
+      return res.status(400).json({ error: 'Invalid JSON file' })
+    }
+
     const final = json2csv(data, { flatten: true })
-    await fs.promises.writeFile(`./dist/uploads/${req.params.imagepath}/${targetName}.csv`, final, 'utf-8')
+
+    const outputPath = `${uploadDir}/${targetName}.csv`
+    await fs.promises.writeFile(outputPath, final, 'utf-8')
+
     res.json({ code: 200, filename: `${targetName}.csv` })
+
   } catch (error) {
-    console.error(error)
-    res.status(500).json({ error: 'Conversion failed' })
+    console.error("REAL ERROR:", error)
+    res.status(500).json({ error: error.message })
   }
 })
 
 app.post('/api/remove-images', async (req, res) => {
-  const imagePath = path.resolve('./dist/uploads/', req.body.imagepath)
+  const imagePath = path.resolve('./dist/uploads/', String(req.body.imagepath))
   try {
     await fs.promises.access(imagePath)
     await fs.promises.rm(imagePath, { recursive: true, force: true })
